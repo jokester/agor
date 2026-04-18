@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# ./agor-daemon — start the Agor daemon in the foreground.
+#
+# Builds @agor/core and @agor/daemon when their sources are stale
+# (shared file lock prevents parallel rebuilds), then runs the daemon
+# directly via node. No tsup watch, no tsx watch — no hot-reload.
+#
+# Env:
+#   PORT             Daemon port (default 3030)
+#   AGOR_CONFIG_PATH Path to config file override
+
+set -euo pipefail
+
+REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source "$REPO_ROOT/scripts/_build-lib.sh"
+
+PORT="${PORT:-3030}"
+
+# Build all workspace dependencies when their sources are stale.
+ensure_core_built
+ensure_executor_built
+ensure_client_built
+ensure_daemon_built
+# CLI must be compiled so bin/run.js (development: false) can find dist/commands/.
+# This avoids oclif's dev-mode path which unconditionally sets NODE_ENV=development,
+# which would prevent the daemon from serving the static UI bundle.
+ensure_cli_built
+
+# set -x here so build output above is not drowned in trace noise.
+set -x
+NODE_ENV=production exec node "$REPO_ROOT/apps/agor-cli/bin/run.js" daemon start --foreground "$@"
