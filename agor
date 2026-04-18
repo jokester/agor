@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# ./agor — run the Agor CLI (dev mode, no build required).
+#
+# Builds @agor/core when sources are stale (shared file lock prevents
+# parallel rebuilds), then invokes the CLI via tsx so no separate CLI
+# build is needed.
+#
+# Config: reads ~/.agor/config.yaml like any Agor CLI. Override the
+# daemon URL with DAEMON_URL=http://localhost:4030 ./agor ...
+#
+# Usage:
+#   ./agor --help
+#   ./agor session list
+#   DAEMON_URL=http://localhost:4030 ./agor session list
+
+set -euo pipefail
+
+REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source "$REPO_ROOT/scripts/_build-lib.sh"
+
+ensure_core_built
+ensure_executor_built
+ensure_client_built
+
+exec pnpm --filter @agor/cli run dev "$@"

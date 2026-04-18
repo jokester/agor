@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# ./agor-ui — start the Vite dev server for the Agor UI.
+#
+# Builds @agor-live/client when its sources are stale (vite.config.ts
+# imports from its dist/ at startup), then starts Vite with HMR.
+#
+# Env:
+#   VITE_PORT   UI port (default 5173)
+
+set -euo pipefail
+
+REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source "$REPO_ROOT/scripts/_build-lib.sh"
+
+VITE_PORT="${VITE_PORT:-5173}"
+
+ensure_core_built
+ensure_executor_built
+ensure_client_built
+
+exec pnpm --filter agor-ui dev --port "$VITE_PORT"
