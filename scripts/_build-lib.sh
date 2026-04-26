@@ -56,3 +56,11 @@ ensure_executor_built() {
     "$REPO_ROOT/packages/executor/src" \
     pnpm --filter @agor/executor build
 }
+
+ensure_cli_built() {
+  _agor_build_if_stale "@agor/cli" \
+    "/tmp/agor-cli-build.lock" \
+    "$REPO_ROOT/apps/agor-cli/dist/commands/daemon/start.js" \
+    "$REPO_ROOT/apps/agor-cli/src" \
+    pnpm --filter @agor/cli build
+}

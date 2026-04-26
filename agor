@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# ./agor — run the Agor CLI (dev mode, no build required).
+# ./agor — run the Agor CLI.
 #
-# Builds @agor/core when sources are stale (shared file lock prevents
-# parallel rebuilds), then invokes the CLI via tsx so no separate CLI
-# build is needed.
+# Builds workspace dependencies when stale (shared file lock prevents
+# parallel rebuilds), then invokes the CLI via node bin/run.js so that
+# oclif runs in production mode (development: false) and does not override
+# NODE_ENV.
 #
 # Config: reads ~/.agor/config.yaml like any Agor CLI. Override the
 # daemon URL with DAEMON_URL=http://localhost:4030 ./agor ...
@@ -18,8 +19,13 @@ set -euo pipefail
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$REPO_ROOT/scripts/_build-lib.sh"
 
+# Build all workspace dependencies when their sources are stale.
 ensure_core_built
 ensure_executor_built
 ensure_client_built
+# CLI must be compiled so bin/run.js (development: false) can find dist/commands/.
+ensure_cli_built
 
-exec pnpm --filter @agor/cli run dev "$@"
+# set -x here so build output above is not drowned in trace noise.
+set -x
+exec node "$REPO_ROOT/apps/agor-cli/bin/run.js" "$@"
