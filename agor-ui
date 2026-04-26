@@ -1,21 +1,31 @@
 #!/usr/bin/env bash
-# ./agor-ui — start the Vite dev server for the Agor UI.
+# ./agor-ui — build the Agor UI static bundle and install it into the daemon.
 #
-# Builds @agor-live/client when its sources are stale (vite.config.ts
-# imports from its dist/ at startup), then starts Vite with HMR.
+# Builds workspace dependencies when stale, runs `vite build`, then copies
+# the output to apps/agor-daemon/ui/ so the daemon serves it at /ui/ from
+# a single origin with no separate dev server needed.
 #
-# Env:
-#   VITE_PORT   UI port (default 5173)
+# Typical usage:
+#   ./agor-ui                 # build and install
+#   ./agor-ui && ./agor-daemon  # build UI, then start daemon
 
 set -euo pipefail
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$REPO_ROOT/scripts/_build-lib.sh"
 
-VITE_PORT="${VITE_PORT:-5173}"
-
 ensure_core_built
 ensure_executor_built
 ensure_client_built
 
-exec pnpm --filter agor-ui dev --port "$VITE_PORT"
+echo "[agor] Building UI..."
+pnpm --filter agor-ui build
+
+UI_DIST="$REPO_ROOT/apps/agor-ui/dist"
+UI_DEST="$REPO_ROOT/apps/agor-daemon/ui"
+
+echo "[agor] Installing UI → $UI_DEST"
+rm -rf "$UI_DEST"
+cp -r "$UI_DIST" "$UI_DEST"
+
+echo "[agor] Done. Start the daemon to serve the UI at /ui/."
