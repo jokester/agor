@@ -2483,32 +2483,18 @@ export async function registerRoutes(ctx: RegisterRoutesContext): Promise<void> 
       async create(data: { name: string }, params: AuthenticatedParams) {
         return userApiKeysService.create(data, params);
       },
+      async patch(id: string, data: { name?: string }, params: AuthenticatedParams) {
+        if (!id) throw new BadRequest('API key ID required');
+        return userApiKeysService.patch(id, data, params);
+      },
+      async remove(id: string, params: AuthenticatedParams) {
+        if (!id) throw new BadRequest('API key ID required');
+        return userApiKeysService.remove(id, params);
+      },
     },
     {
       find: { role: ROLES.MEMBER, action: 'list API keys' },
       create: { role: ROLES.MEMBER, action: 'create API keys' },
-    },
-    requireAuth
-  );
-
-  registerAuthenticatedRoute(
-    app,
-    '/api/v1/user/api-keys/:id',
-    {
-      // biome-ignore lint/suspicious/noExplicitAny: Feathers service type
-      async patch(data: { name?: string }, params: any) {
-        const id = params.route?.id;
-        if (!id) throw new BadRequest('API key ID required');
-        return userApiKeysService.patch(id, data, params);
-      },
-      // biome-ignore lint/suspicious/noExplicitAny: Feathers service type
-      async remove(_id: unknown, params: any) {
-        const keyId = params.route?.id;
-        if (!keyId) throw new BadRequest('API key ID required');
-        return userApiKeysService.remove(keyId, params);
-      },
-    },
-    {
       patch: { role: ROLES.MEMBER, action: 'update API keys' },
       remove: { role: ROLES.MEMBER, action: 'delete API keys' },
     },
