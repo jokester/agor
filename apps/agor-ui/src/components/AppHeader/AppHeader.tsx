@@ -1,4 +1,13 @@
-import type { ActiveUser, Board, BoardID, User, Worktree } from '@agor-live/client';
+import type {
+  ActiveUser,
+  Artifact,
+  Board,
+  BoardID,
+  MCPServer,
+  Session,
+  User,
+  Worktree,
+} from '@agor-live/client';
 import {
   ApiOutlined,
   CommentOutlined,
@@ -28,6 +37,7 @@ import { BoardSwitcher } from '../BoardSwitcher';
 import { BrandLogo } from '../BrandLogo';
 import { ConnectionStatus } from '../ConnectionStatus';
 import { Facepile } from '../Facepile';
+import { GlobalSearch } from '../GlobalSearch';
 import { MarkdownRenderer } from '../MarkdownRenderer';
 import { ThemeSwitcher } from '../ThemeSwitcher';
 
@@ -55,8 +65,8 @@ export interface AppHeaderProps {
   boards?: Board[];
   currentBoardId?: string;
   onBoardChange?: (boardId: string) => void;
-  worktreeById?: Map<string, Worktree>;
-  boardById?: Map<string, Board>; // For looking up board names
+  worktreeById: Map<string, Worktree>;
+  boardById: Map<string, Board>; // For looking up board names; required because GlobalSearch hands it to useAppNavigation for slug-aware path building
   onUserClick?: (
     userId: string,
     boardId?: BoardID,
@@ -68,6 +78,12 @@ export interface AppHeaderProps {
   instanceLabel?: string;
   /** Instance description (markdown) shown in popover around the instance label */
   instanceDescription?: string;
+  /** Live entity maps for the global-search dropdown. Passed through from App.tsx.
+   * GlobalSearch calls useAppNavigation directly, so it needs boardById (for
+   * slug-aware path building) on top of the entity maps. */
+  sessionById: Map<string, Session>;
+  artifactById: Map<string, Artifact>;
+  mcpServerById: Map<string, MCPServer>;
 }
 
 const RecentBoardPills: React.FC<{
@@ -130,12 +146,15 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
   boards = [],
   currentBoardId,
   onBoardChange,
-  worktreeById = new Map(),
+  worktreeById,
   boardById,
   onUserClick,
   recentBoards = [],
   instanceLabel,
   instanceDescription,
+  sessionById,
+  artifactById,
+  mcpServerById,
 }) => {
   const { token } = theme.useToken();
   // Single source of truth for "is the daemon usable right now?". Captures
@@ -299,6 +318,16 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
           connecting={connecting}
           onRetry={onRetryConnection}
         />
+        <GlobalSearch
+          currentUserId={currentUserId}
+          sessionById={sessionById}
+          worktreeById={worktreeById}
+          artifactById={artifactById}
+          boardById={boardById}
+          mcpServerById={mcpServerById}
+          onSettingsClick={onSettingsClick}
+        />
+        <Divider orientation="vertical" style={{ height: 32, margin: '0 8px' }} />
         {activeUsers.length > 0 && (
           <>
             <Facepile
