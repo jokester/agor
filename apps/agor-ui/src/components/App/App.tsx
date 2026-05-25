@@ -510,9 +510,11 @@ export const App: React.FC<AppProps> = ({
     const sessionId = await onCreateSession?.(config, currentBoardId);
     setNewSessionBranchId(null);
 
-    // If session was created successfully, open the drawer to show it
+    // Route through the URL so useUrlState owns selection — setting
+    // selectedSessionId directly raced with the cleanup effect (and the
+    // state→URL self-heal) before the socket `created` event arrived.
     if (sessionId) {
-      setSelectedSessionId(sessionId);
+      navigation.goToSession(sessionId);
     }
   };
 
@@ -798,7 +800,7 @@ export const App: React.FC<AppProps> = ({
               onEventStreamClick={() => {
                 // If session is open, close it and show event stream
                 if (effectiveSelectedSessionId) {
-                  setSelectedSessionId(null);
+                  if (currentBoardId) navigation.goToBoard(currentBoardId);
                   setEventStreamPanelCollapsed(false);
                 } else {
                   // Toggle event stream panel
