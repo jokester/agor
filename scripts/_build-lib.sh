@@ -9,6 +9,12 @@
 #   - Runs the build only when dist is absent or any .ts source is newer
 #     than the sentinel dist file.
 
+# Bump Node's old-generation heap for builds. Default targets a 4GB Pi:
+# 3072MB headroom for tsup / tsc / vite, leaving ~1GB for the OS and other
+# processes. Override via env (e.g. AGOR_BUILD_HEAP_MB=2048 ./agor-build-ui)
+# or by pre-setting NODE_OPTIONS yourself.
+export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=${AGOR_BUILD_HEAP_MB:-3072}}"
+
 _agor_build_if_stale() {
   local label="$1" lockfile="$2" sentinel="$3" srcdir="$4"
   shift 4
