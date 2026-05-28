@@ -85,8 +85,17 @@ export type GeminiStreamEvent =
       result: unknown;
     };
 
+/** SDK invocation model — falls back to DEFAULT_GEMINI_MODEL. Never used for recording. */
+export function resolveGeminiInvocationModel(session: {
+  model_config?: { model?: string };
+}): GeminiModel {
+  return (session.model_config?.model as GeminiModel | undefined) ?? DEFAULT_GEMINI_MODEL;
+}
+
 export class GeminiPromptService {
   private sessionClients = new Map<SessionID, InstanceType<typeof Gemini.GeminiClient>>();
+  /** Invocation model bound on each cached client — triggers recreate when it changes. */
+  private sessionClientInvocationModels = new Map<SessionID, string>();
   private activeControllers = new Map<SessionID, AbortController>();
   private apiKey?: string; // Resolved API key from base-executor
   private useNativeAuth: boolean; // Whether to use OAuth (no API key found)
@@ -134,7 +143,9 @@ export class GeminiPromptService {
     // Get or create Gemini client for this session
     const client = await this.getOrCreateClient(sessionId, permissionMode, contextUserId);
 
-    const model = (session.model_config?.model as GeminiModel) || DEFAULT_GEMINI_MODEL;
+    // For recording on stream events. SDK invocation uses the model bound
+    // on the cached client (see getOrCreateClient).
+    const configuredModel = session.model_config?.model;
 
     // Prepare initial prompt (just text for now - can enhance with file paths later)
     let parts: Part[] = [{ text: prompt }];
@@ -189,7 +200,7 @@ export class GeminiPromptService {
               yield {
                 type: 'partial',
                 textChunk,
-                resolvedModel: model,
+                resolvedModel: configuredModel,
                 sessionId,
               };
               break;
@@ -288,7 +299,7 @@ export class GeminiPromptService {
                   type: 'complete',
                   content,
                   toolUses: toolUses.length > 0 ? toolUses : undefined,
-                  resolvedModel: model,
+                  resolvedModel: configuredModel,
                   sessionId,
                   usage: mappedUsage,
                   rawSdkResponse: finishedEvent, // Pass through the actual SDK response (UNMUTATED)
@@ -563,19 +574,20 @@ export class GeminiPromptService {
     // Map Agor permission mode to Gemini ApprovalMode
     const approvalMode = mapPermissionMode(permissionMode || 'ask');
 
-    // Check if client exists - NEVER clear the cache to preserve conversation history
-    if (this.sessionClients.has(sessionId)) {
-      const existingClient = this.sessionClients.get(sessionId)!;
-      const config = (existingClient as unknown as GeminiClientWithConfig).config;
+    // Recreate the cached client if the session's model changed —
+    // Gemini binds the model at construction.
+    const invocationModel = resolveGeminiInvocationModel(session);
+    const cachedInvocationModel = this.sessionClientInvocationModels.get(sessionId);
+    const cachedClient = this.sessionClients.get(sessionId);
 
-      // Update approval mode on existing client (in case it changed)
+    if (cachedClient && cachedInvocationModel === invocationModel) {
+      const config = (cachedClient as unknown as GeminiClientWithConfig).config;
+
       if (config && typeof config.setApprovalMode === 'function') {
         config.setApprovalMode(approvalMode);
         console.log(`🔄 [Gemini] Updated approval mode for existing client: ${approvalMode}`);
       }
 
-      // Refresh authentication if available
-      // Use pre-resolved API key and auth type (no need to re-check process.env)
       if (config && typeof config.refreshAuth === 'function') {
         try {
           await config.refreshAuth(authType);
@@ -590,7 +602,17 @@ export class GeminiPromptService {
         }
       }
 
-      return existingClient;
+      return cachedClient;
+    }
+
+    if (cachedClient) {
+      // Model changed — recreate. Conversation history is preserved via
+      // the SDK's per-session chat-recording file.
+      console.log(
+        `🔄 [Gemini] Model changed (${cachedInvocationModel} → ${invocationModel}); recreating client`
+      );
+      this.sessionClients.delete(sessionId);
+      this.sessionClientInvocationModels.delete(sessionId);
     }
 
     // Session was already fetched above for API key resolution
@@ -621,8 +643,7 @@ export class GeminiPromptService {
       );
     }
 
-    // Get model from session config
-    const model = (session.model_config?.model as GeminiModel) || DEFAULT_GEMINI_MODEL;
+    const model = invocationModel;
 
     // approvalMode already mapped at top of function
     console.log(
@@ -852,8 +873,11 @@ export class GeminiPromptService {
       }
     }
 
-    // Cache client for reuse
+    // Cache client + the invocation model it was bound to. Both maps must
+    // be set together so the next call's cache-invalidation check sees a
+    // consistent (client, model) pair.
     this.sessionClients.set(sessionId, client);
+    this.sessionClientInvocationModels.set(sessionId, invocationModel);
 
     return client;
   }
@@ -922,6 +946,7 @@ export class GeminiPromptService {
     if (client) {
       await client.resetChat(); // Clear history
       this.sessionClients.delete(sessionId);
+      this.sessionClientInvocationModels.delete(sessionId);
       console.log(`🗑️  Closed Gemini client for session ${sessionId}`);
     }
 

@@ -52,7 +52,8 @@ export interface NormalizedSdkData {
   costUsd?: number;
 
   /**
-   * Primary model used (e.g., "claude-sonnet-4-5-20250929")
+   * Primary model — only when the raw SDK response actually echoes one.
+   * Never substitute a tool default. See `sdk-handlers/base/model-recording.ts`.
    */
   primaryModel?: string;
 

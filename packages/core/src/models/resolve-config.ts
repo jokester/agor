@@ -16,7 +16,12 @@
  * - Returns `undefined` when there is no usable model, so callers can chain
  *   with `??` or feed a list into `resolveModelConfigPrecedence`.
  */
+import type { AgenticToolName } from '../types/index.js';
 import type { EffortLevel, Session } from '../types/session.js';
+import { DEFAULT_CLAUDE_MODEL } from './claude.js';
+import { DEFAULT_CODEX_MODEL } from './codex.js';
+import { DEFAULT_COPILOT_MODEL } from './copilot.js';
+import { DEFAULT_GEMINI_MODEL } from './gemini-shared.js';
 
 /**
  * Loose input shape accepted by the resolver.
@@ -88,4 +93,40 @@ export function resolveModelConfigPrecedence(
     if (resolved) return resolved;
   }
   return undefined;
+}
+
+/**
+ * Static default model for a tool. Undefined for cursor / opencode whose
+ * defaults are sourced elsewhere (async daemon fetch / provider+model pair).
+ */
+export function getDefaultModelForTool(tool: AgenticToolName): string | undefined {
+  switch (tool) {
+    case 'claude-code':
+    case 'claude-code-cli':
+      return DEFAULT_CLAUDE_MODEL;
+    case 'codex':
+      return DEFAULT_CODEX_MODEL;
+    case 'gemini':
+      return DEFAULT_GEMINI_MODEL;
+    case 'copilot':
+      return DEFAULT_COPILOT_MODEL;
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * `resolveModelConfigPrecedence` plus a final fallback to the tool's static
+ * default. Use this at the session-create boundary.
+ */
+export function resolveModelConfigWithFallback(
+  tool: AgenticToolName,
+  sources: Array<ModelConfigInput | undefined | null>,
+  opts?: { now?: Date }
+): ResolvedModelConfig | undefined {
+  const fromSources = resolveModelConfigPrecedence(sources, opts);
+  if (fromSources) return fromSources;
+  const toolDefault = getDefaultModelForTool(tool);
+  if (!toolDefault) return undefined;
+  return resolveModelConfig({ mode: 'alias', model: toolDefault }, opts);
 }

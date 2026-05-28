@@ -61,6 +61,12 @@ export interface BaseTool {
      * `Task.computed_context_window` and `normalized_sdk_response.contextUsageSnapshot`.
      */
     rawContextUsage?: ContextUsageSnapshot;
+    /**
+     * Resolved model the tool actually invoked. Leave undefined when
+     * unknown — never substitute a tool default. See
+     * `sdk-handlers/base/model-recording.ts`.
+     */
+    model?: string;
   }>;
 
   // Optional stopTask method for tools that support interruption
@@ -427,20 +433,24 @@ export async function executeToolTask(params: {
     // Store both raw (for debugging) and normalized (for UI/analytics)
     if (result.rawSdkResponse) {
       patchData.raw_sdk_response = result.rawSdkResponse;
-      // Normalize using tool-specific normalizer (toolName maps to agentic tool type)
-      const normalized = normalizeRawSdkResponse(toolName, result.rawSdkResponse);
+      // `modelHint` refines context-window lookup for tools whose SDK
+      // event omits the model; never used as primaryModel.
+      const normalized = normalizeRawSdkResponse(toolName, result.rawSdkResponse, {
+        modelHint: result.model,
+      });
       if (normalized) {
         patchData.normalized_sdk_response = normalized;
         console.log(
           `[${toolName}] Normalized SDK response: ${normalized.tokenUsage.totalTokens} tokens, $${normalized.costUsd?.toFixed(4) ?? 'N/A'}`
         );
-
-        // Extract model from normalized response to display correct model tag in UI
-        if (normalized.primaryModel) {
-          patchData.model = normalized.primaryModel;
-          console.log(`[${toolName}] Task model set to: ${normalized.primaryModel}`);
-        }
       }
+    }
+
+    // result.model (configured) wins over normalizer's primaryModel (SDK echo).
+    const resolvedTaskModel = result.model || patchData.normalized_sdk_response?.primaryModel;
+    if (resolvedTaskModel) {
+      patchData.model = resolvedTaskModel;
+      console.log(`[${toolName}] Task model set to: ${resolvedTaskModel}`);
     }
 
     // Prefer the authoritative context-window snapshot when the tool surfaced

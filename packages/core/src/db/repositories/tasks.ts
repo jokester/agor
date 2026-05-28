@@ -81,7 +81,8 @@ export class TaskRepository implements BaseRepository<Task, Partial<Task>> {
           start_timestamp: new Date(now).toISOString(),
         },
         git_state,
-        model: task.model ?? 'claude-sonnet-4-6',
+        // Filled in by the executor after the turn — don't substitute a default.
+        ...(task.model ? { model: task.model } : {}),
         tool_use_count: task.tool_use_count ?? 0,
         duration_ms: task.duration_ms, // Task execution duration
         agent_session_id: task.agent_session_id, // SDK session ID

@@ -42,8 +42,8 @@ import type {
   TasksService,
   ToolCapabilities,
 } from '../base/index.js';
+import { buildAssistantMessageMetadata, patchTaskModelIfKnown } from '../base/model-recording.js';
 import { createUserMessage } from '../claude/message-builder.js';
-import { DEFAULT_COPILOT_MODEL } from './models.js';
 import { CopilotPromptService } from './prompt-service.js';
 
 interface CopilotExecutionResult {
@@ -325,7 +325,7 @@ export class CopilotTool implements ITool {
       tokenUsage,
       contextWindow: undefined,
       contextWindowLimit: undefined,
-      model: resolvedModel || DEFAULT_COPILOT_MODEL,
+      model: resolvedModel,
       rawSdkResponse,
       wasStopped,
     };
@@ -388,20 +388,11 @@ export class CopilotTool implements ITool {
       content: content as Message['content'],
       tool_uses: toolUses,
       task_id: taskId,
-      metadata: {
-        model: resolvedModel || DEFAULT_COPILOT_MODEL,
-        tokens: {
-          input: tokenUsage?.input_tokens ?? 0,
-          output: tokenUsage?.output_tokens ?? 0,
-        },
-      },
+      metadata: buildAssistantMessageMetadata({ model: resolvedModel, tokenUsage }),
     };
 
     await this.messagesService?.create(message);
-
-    if (taskId && resolvedModel && this.tasksService) {
-      await this.tasksService.patch(taskId, { model: resolvedModel });
-    }
+    await patchTaskModelIfKnown(this.tasksService, taskId, resolvedModel);
 
     return message;
   }

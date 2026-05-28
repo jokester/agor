@@ -151,8 +151,17 @@ describe('resolveSessionDefaults', () => {
   });
 
   describe('model_config', () => {
-    it('returns undefined when no model is configured anywhere', () => {
+    it('falls back to the tool default when no model is configured anywhere', () => {
       const r = resolveSessionDefaults({ agenticTool: 'claude-code', now });
+      expect(r.model_config).toEqual({
+        mode: 'alias',
+        model: 'claude-sonnet-4-6',
+        updated_at: now.toISOString(),
+      });
+    });
+
+    it('still returns undefined for tools without a static default (cursor)', () => {
+      const r = resolveSessionDefaults({ agenticTool: 'cursor', now });
       expect(r.model_config).toBeUndefined();
     });
 

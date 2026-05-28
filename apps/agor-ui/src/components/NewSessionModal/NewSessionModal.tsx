@@ -151,7 +151,7 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
         agent: selectedAgent,
         title: values.title,
         initialPrompt: values.initialPrompt,
-        // Use form values if present (user expanded advanced), otherwise use defaults
+        // Daemon's applySessionConfigDefaults hook fills the tool default.
         modelConfig: values.modelConfig ?? agentDefaults?.modelConfig,
         effort: (values.effort as EffortLevel | undefined) ?? agentDefaults?.modelConfig?.effort,
         mcpServerIds: values.mcpServerIds ?? fallbackMcpServerIds,

@@ -43,8 +43,8 @@ import type {
   TasksStreamingService,
   ToolCapabilities,
 } from '../base/index.js';
+import { buildAssistantMessageMetadata, patchTaskModelIfKnown } from '../base/model-recording.js';
 import { createUserMessage } from '../claude/message-builder.js';
-import { DEFAULT_CODEX_MODEL } from './models.js';
 import { CodexPromptService } from './prompt-service.js';
 import { extractCodexContextSnapshotFromEvent, extractCodexContextWindowUsage } from './usage.js';
 
@@ -543,7 +543,7 @@ export class CodexTool implements ITool {
       // Codex SDK doesn't provide contextWindow/contextWindowLimit
       contextWindow: undefined,
       contextWindowLimit: undefined,
-      model: resolvedModel || DEFAULT_CODEX_MODEL,
+      model: resolvedModel,
       rawSdkResponse,
       rawContextUsage,
       wasStopped,
@@ -618,21 +618,11 @@ export class CodexTool implements ITool {
       content: content as Message['content'],
       tool_uses: toolUses,
       task_id: taskId,
-      metadata: {
-        model: resolvedModel || DEFAULT_CODEX_MODEL,
-        tokens: {
-          input: tokenUsage?.input_tokens ?? 0,
-          output: tokenUsage?.output_tokens ?? 0,
-        },
-      },
+      metadata: buildAssistantMessageMetadata({ model: resolvedModel, tokenUsage }),
     };
 
     await this.messagesService?.create(message);
-
-    // If task exists, update it with resolved model
-    if (taskId && resolvedModel && this.tasksService) {
-      await this.tasksService.patch(taskId, { model: resolvedModel });
-    }
+    await patchTaskModelIfKnown(this.tasksService, taskId, resolvedModel);
 
     return message;
   }
@@ -765,7 +755,7 @@ export class CodexTool implements ITool {
       // Codex SDK doesn't provide contextWindow/contextWindowLimit
       contextWindow: undefined,
       contextWindowLimit: undefined,
-      model: resolvedModel || DEFAULT_CODEX_MODEL,
+      model: resolvedModel,
       rawSdkResponse,
       rawContextUsage,
       wasStopped,

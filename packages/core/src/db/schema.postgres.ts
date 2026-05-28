@@ -281,7 +281,8 @@ export const tasks = pgTable(
         message_range: Task['message_range'];
         git_state: Task['git_state'];
 
-        model: string;
+        /** Filled by the executor after the turn. */
+        model?: string;
         tool_use_count: number;
 
         duration_ms?: number;

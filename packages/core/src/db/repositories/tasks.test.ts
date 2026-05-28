@@ -150,6 +150,27 @@ describe('TaskRepository.create', () => {
     await expect(taskRepo.create(data)).rejects.toThrow('session_id is required');
   });
 
+  dbTest('should leave Task.model undefined when not provided', async ({ db }) => {
+    const taskRepo = new TaskRepository(db);
+    const sessionId = await createSessionWithDeps(db);
+    const data = createTaskData({ session_id: sessionId });
+    delete (data as any).model;
+
+    const created = await taskRepo.create(data);
+
+    expect(created.model).toBeUndefined();
+  });
+
+  dbTest('should preserve explicit Task.model when provided', async ({ db }) => {
+    const taskRepo = new TaskRepository(db);
+    const sessionId = await createSessionWithDeps(db);
+    const data = createTaskData({ session_id: sessionId, model: 'gpt-5.5' });
+
+    const created = await taskRepo.create(data);
+
+    expect(created.model).toBe('gpt-5.5');
+  });
+
   dbTest('should handle complex task data with all optional fields', async ({ db }) => {
     const taskRepo = new TaskRepository(db);
     const sessionId = await createSessionWithDeps(db);
