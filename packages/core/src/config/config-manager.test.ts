@@ -186,6 +186,50 @@ describe('loadConfig', () => {
     expect(loaded.defaults).toBeUndefined();
     expect(loaded.display).toBeUndefined();
   });
+
+  it('does not configure an external launch login redirect by default', async () => {
+    const loaded = await loadConfig();
+    expect(loaded.external_launch?.login_redirect_url).toBeUndefined();
+  });
+
+  it('accepts an HTTP(S) external launch login redirect URL', async () => {
+    const agorDir = path.join(tempDir, '.agor');
+    const configPath = path.join(agorDir, 'config.yaml');
+
+    await fs.mkdir(agorDir, { recursive: true });
+    await fs.writeFile(
+      configPath,
+      yaml.dump({
+        external_launch: {
+          enabled: true,
+          login_redirect_url: ' https://workspace.example.com/open ',
+        },
+      }),
+      'utf-8'
+    );
+
+    const loaded = await loadConfig();
+    expect(loaded.external_launch?.login_redirect_url).toBe('https://workspace.example.com/open');
+  });
+
+  it('rejects a non-HTTP(S) external launch login redirect URL', async () => {
+    const agorDir = path.join(tempDir, '.agor');
+    const configPath = path.join(agorDir, 'config.yaml');
+
+    await fs.mkdir(agorDir, { recursive: true });
+    await fs.writeFile(
+      configPath,
+      yaml.dump({
+        external_launch: {
+          enabled: true,
+          login_redirect_url: 'javascript:alert(1)',
+        },
+      }),
+      'utf-8'
+    );
+
+    await expect(loadConfig()).rejects.toThrow(/external_launch\.login_redirect_url.*http/i);
+  });
 });
 
 describe('loadConfig cache', () => {
@@ -443,6 +487,17 @@ describe('saveConfig', () => {
 
     const loaded = await loadConfig();
     expect(loaded).toEqual({});
+  });
+
+  it('validates external launch login redirect before saving', async () => {
+    await expect(
+      saveConfig({
+        external_launch: {
+          enabled: true,
+          login_redirect_url: 'javascript:alert(1)',
+        },
+      })
+    ).rejects.toThrow(/external_launch\.login_redirect_url.*http/i);
   });
 
   it('should format YAML with proper indentation', async () => {

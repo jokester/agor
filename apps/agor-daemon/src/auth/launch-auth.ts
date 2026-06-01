@@ -32,6 +32,11 @@ interface ResolvedLaunchSettings {
   algorithms?: string[];
 }
 
+export interface PublicLaunchAuthSettings {
+  enabled: boolean;
+  loginRedirectUrl?: string;
+}
+
 interface LaunchExchangeResponse {
   assertion?: string;
   claims?: LaunchClaims;
@@ -101,6 +106,16 @@ export function resolveLaunchSettings(config: AgorConfig): ResolvedLaunchSetting
     allowAdminRoles: raw?.allow_admin_roles === true,
     requestTimeoutMs: raw?.request_timeout_ms ?? DEFAULT_TIMEOUT_MS,
     algorithms: raw?.algorithms,
+  };
+}
+
+export function resolvePublicLaunchAuthSettings(config: AgorConfig): PublicLaunchAuthSettings {
+  const raw = config.external_launch;
+  const enabled = envFlag(process.env.AGOR_EXTERNAL_LAUNCH_ENABLED) ?? raw?.enabled === true;
+
+  return {
+    enabled,
+    ...(enabled && raw?.login_redirect_url ? { loginRedirectUrl: raw.login_redirect_url } : {}),
   };
 }
 

@@ -179,6 +179,52 @@ function validateConfig(config: AgorConfig): void {
         `To update: agor config set execution.unix_user_mode insulated`
     );
   }
+
+  validateOptionalHttpUrl(
+    config.external_launch as Record<string, unknown> | undefined,
+    'login_redirect_url',
+    'external_launch.login_redirect_url'
+  );
+}
+
+function validateOptionalHttpUrl(
+  container: Record<string, unknown> | undefined,
+  key: string,
+  configPath: string
+): void {
+  if (!container || container[key] === undefined) return;
+
+  const raw = container[key];
+  if (typeof raw !== 'string') {
+    throw new Error(`Config error: ${configPath} must be an HTTP(S) URL string`);
+  }
+
+  container[key] = validateHttpUrlString(raw, configPath);
+}
+
+function validateHttpUrlString(
+  url: string,
+  label: string,
+  options: { stripTrailingSlash?: boolean } = {}
+): string {
+  const trimmed = options.stripTrailingSlash ? url.trim().replace(/\/$/, '') : url.trim();
+
+  if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
+    throw new Error(`Invalid ${label}: "${url}". Must start with http:// or https://`);
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new Error(`Invalid ${label} format: "${url}". Must be a valid HTTP(S) URL.`);
+  }
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(`Invalid ${label}: "${url}". Must use http:// or https://`);
+  }
+
+  return trimmed;
 }
 
 /**
@@ -255,6 +301,7 @@ export async function loadConfigFromFile(filePath: string): Promise<AgorConfig> 
  * Invalidates the in-memory cache so the next load reflects the fresh value.
  */
 export async function saveConfig(config: AgorConfig): Promise<void> {
+  validateConfig(config);
   await ensureAgorHome();
 
   const configPath = getConfigPath();
@@ -468,21 +515,7 @@ export async function getDaemonUrl(): Promise<string> {
  * @throws Error if URL is invalid or uses unsupported scheme
  */
 function validateBaseUrl(url: string): string {
-  const trimmed = url.trim().replace(/\/$/, ''); // Remove trailing slash and whitespace
-
-  // Basic validation: must start with http:// or https://
-  if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
-    throw new Error(`Invalid base URL: "${url}". Must start with http:// or https://`);
-  }
-
-  // Additional validation: ensure it's a valid URL structure
-  try {
-    new URL(trimmed);
-  } catch {
-    throw new Error(`Invalid base URL format: "${url}". Must be a valid HTTP(S) URL.`);
-  }
-
-  return trimmed;
+  return validateHttpUrlString(url, 'base URL', { stripTrailingSlash: true });
 }
 
 /**
