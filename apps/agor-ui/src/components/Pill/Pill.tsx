@@ -30,6 +30,7 @@ import { resolveContextWindowPercentage } from '../../utils/contextWindow';
 import { parseGitStateSha } from '../../utils/gitState';
 import { type SessionForIds, SessionIdsList } from '../SessionIds';
 import { Tag } from '../Tag';
+import { getUrlDisplayLabel, isGitHubUrl, type UrlDisplayRepo } from './url-helpers';
 
 /**
  * Standardized color palette for pills/badges
@@ -914,51 +915,7 @@ export const RepoPill: React.FC<RepoPillProps> = ({
   );
 };
 
-/**
- * Extract a concise display label from a URL.
- * GitHub: org/repo#123, Shortcut: story/12345, Jira/Linear: ticket ID, etc.
- */
-export function getUrlDisplayLabel(url: string): string {
-  try {
-    const parsed = new URL(url);
-    const pathParts = parsed.pathname.split('/').filter(Boolean);
-
-    if (parsed.hostname === 'github.com' && pathParts.length >= 4) {
-      const [org, repo, , number] = pathParts;
-      return `${org}/${repo}#${number}`;
-    }
-
-    if (parsed.hostname === 'app.shortcut.com' && pathParts.length >= 3) {
-      return `${pathParts[1]}/${pathParts[2]}`;
-    }
-
-    if (parsed.hostname.includes('atlassian.net') || parsed.hostname.includes('jira')) {
-      return pathParts[pathParts.length - 1] || parsed.hostname;
-    }
-
-    if (parsed.hostname === 'linear.app') {
-      // Linear URLs: /issue/TEAM-123/slug — extract the issue ID, not the slug
-      const issueIdx = pathParts.indexOf('issue');
-      if (issueIdx !== -1 && pathParts[issueIdx + 1]) {
-        return pathParts[issueIdx + 1];
-      }
-      return pathParts[pathParts.length - 1] || parsed.hostname;
-    }
-
-    return pathParts[pathParts.length - 1] || parsed.hostname;
-  } catch {
-    return url.split('/').pop() || '?';
-  }
-}
-
-export function isGitHubUrl(url: string): boolean {
-  try {
-    const { hostname } = new URL(url);
-    return hostname === 'github.com' || hostname.endsWith('.github.com');
-  } catch {
-    return false;
-  }
-}
+export { getUrlDisplayLabel, isGitHubUrl } from './url-helpers';
 
 function getIssueIcon(url: string): React.ReactNode {
   if (isGitHubUrl(url)) return <GithubOutlined />;
@@ -982,10 +939,16 @@ const pillTextStyle: React.CSSProperties = {
 interface IssuePillProps extends BasePillProps {
   issueUrl: string;
   issueNumber?: string;
+  currentRepo?: UrlDisplayRepo;
 }
 
-export const IssuePill: React.FC<IssuePillProps> = ({ issueUrl, issueNumber, style }) => {
-  const displayText = issueNumber || getUrlDisplayLabel(issueUrl);
+export const IssuePill: React.FC<IssuePillProps> = ({
+  issueUrl,
+  issueNumber,
+  currentRepo,
+  style,
+}) => {
+  const displayText = issueNumber || getUrlDisplayLabel(issueUrl, { currentRepo });
 
   return (
     <Tooltip title={issueUrl}>
@@ -1004,10 +967,16 @@ export const IssuePill: React.FC<IssuePillProps> = ({ issueUrl, issueNumber, sty
 interface PullRequestPillProps extends BasePillProps {
   prUrl: string;
   prNumber?: string;
+  currentRepo?: UrlDisplayRepo;
 }
 
-export const PullRequestPill: React.FC<PullRequestPillProps> = ({ prUrl, prNumber, style }) => {
-  const displayText = prNumber || getUrlDisplayLabel(prUrl);
+export const PullRequestPill: React.FC<PullRequestPillProps> = ({
+  prUrl,
+  prNumber,
+  currentRepo,
+  style,
+}) => {
+  const displayText = prNumber || getUrlDisplayLabel(prUrl, { currentRepo });
 
   return (
     <Tooltip title={prUrl}>

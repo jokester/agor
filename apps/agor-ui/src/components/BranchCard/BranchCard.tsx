@@ -495,8 +495,10 @@ const BranchCardComponent = ({
               prefix="Created by"
             />
           )}
-          {branch.issue_url && <IssuePill issueUrl={branch.issue_url} />}
-          {branch.pull_request_url && <PullRequestPill prUrl={branch.pull_request_url} />}
+          {branch.issue_url && <IssuePill issueUrl={branch.issue_url} currentRepo={repo} />}
+          {branch.pull_request_url && (
+            <PullRequestPill prUrl={branch.pull_request_url} currentRepo={repo} />
+          )}
           <EnvironmentPill
             repo={repo}
             branch={branch}
