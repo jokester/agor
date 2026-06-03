@@ -6,7 +6,7 @@
  */
 
 import { PAGINATION } from '@agor/core/config';
-import { BoardRepository, type Database } from '@agor/core/db';
+import { BoardObjectRepository, BoardRepository, type Database } from '@agor/core/db';
 import type {
   AuthenticatedParams,
   Board,
@@ -16,6 +16,10 @@ import type {
 } from '@agor/core/types';
 import { NotFoundError } from '@agor/core/utils/errors';
 import { DrizzleService } from '../adapters/drizzle';
+import {
+  type BoardObjectPatchedEventPayload,
+  toBoardObjectPatchedEventPayload,
+} from './board-objects.js';
 
 /**
  * Board service params
@@ -33,8 +37,13 @@ export interface BoardParams
  */
 export class BoardsService extends DrizzleService<Board, Partial<Board>, BoardParams> {
   private boardRepo: BoardRepository;
+  private boardObjectRepo: BoardObjectRepository;
+  private emitBoardObjectPatched?: (boardObject: BoardObjectPatchedEventPayload) => void;
 
-  constructor(db: Database) {
+  constructor(
+    db: Database,
+    emitBoardObjectPatched?: (boardObject: BoardObjectPatchedEventPayload) => void
+  ) {
     const boardRepo = new BoardRepository(db);
     super(boardRepo, {
       id: 'board_id',
@@ -46,6 +55,8 @@ export class BoardsService extends DrizzleService<Board, Partial<Board>, BoardPa
     });
 
     this.boardRepo = boardRepo;
+    this.boardObjectRepo = new BoardObjectRepository(db);
+    this.emitBoardObjectPatched = emitBoardObjectPatched;
   }
 
   /**
@@ -98,6 +109,25 @@ export class BoardsService extends DrizzleService<Board, Partial<Board>, BoardPa
     objectId: string,
     _params?: BoardParams
   ): Promise<Board> {
+    const board = await this.boardRepo.findBySlugOrId(boardId);
+    const object = board?.objects?.[objectId];
+
+    // A generic removeObject path can remove zones too (e.g. MCP
+    // agor_boards_update.removeObjects). Clear entity zone references first so
+    // future board renders do not construct React Flow children with a missing
+    // parent. Convert zone-relative positions to absolute while the zone origin
+    // is still available.
+    if (board && object?.type === 'zone') {
+      const cleared = await this.boardObjectRepo.clearZoneReferences(board.board_id, objectId, {
+        x: object.x,
+        y: object.y,
+      });
+
+      for (const boardObject of cleared) {
+        this.emitBoardObjectPatched?.(toBoardObjectPatchedEventPayload(boardObject));
+      }
+    }
+
     return this.boardRepo.removeBoardObject(boardId, objectId);
   }
 
@@ -140,10 +170,14 @@ export class BoardsService extends DrizzleService<Board, Partial<Board>, BoardPa
   async deleteZone(
     boardId: string,
     objectId: string,
-    deleteAssociatedSessions: boolean,
+    _deleteAssociatedSessions: boolean,
     _params?: BoardParams
   ): Promise<{ board: Board; affectedSessions: string[] }> {
-    return this.boardRepo.deleteZone(boardId, objectId, deleteAssociatedSessions);
+    const board = await this.removeBoardObject(boardId, objectId);
+    return {
+      board,
+      affectedSessions: [],
+    };
   }
 
   /**
@@ -339,6 +373,9 @@ export class BoardsService extends DrizzleService<Board, Partial<Board>, BoardPa
 /**
  * Service factory function
  */
-export function createBoardsService(db: Database): BoardsService {
-  return new BoardsService(db);
+export function createBoardsService(
+  db: Database,
+  emitBoardObjectPatched?: (boardObject: BoardObjectPatchedEventPayload) => void
+): BoardsService {
+  return new BoardsService(db, emitBoardObjectPatched);
 }

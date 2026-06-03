@@ -15,6 +15,19 @@ import type {
   QueryParams,
 } from '@agor/core/types';
 
+export type BoardObjectPatchedEventPayload = Omit<BoardEntityObject, 'zone_id'> & {
+  zone_id?: string | null;
+};
+
+export function toBoardObjectPatchedEventPayload(
+  boardObject: BoardEntityObject
+): BoardObjectPatchedEventPayload {
+  return {
+    ...boardObject,
+    ...(boardObject.zone_id === undefined ? { zone_id: null } : {}),
+  };
+}
+
 /**
  * Board object service params
  */
@@ -148,11 +161,11 @@ export class BoardObjectsService {
 
       // Emit single WebSocket event with both updates
       // Explicitly include zone_id field (even if undefined) to signal zone changes to clients
-      const eventPayload = {
-        ...boardObject,
-        ...(boardObject.zone_id === undefined ? { zone_id: null } : {}),
-      };
-      this.emit?.('patched', eventPayload as BoardEntityObject, params);
+      this.emit?.(
+        'patched',
+        toBoardObjectPatchedEventPayload(boardObject) as BoardEntityObject,
+        params
+      );
 
       return boardObject;
     }
@@ -207,13 +220,12 @@ export class BoardObjectsService {
   ): Promise<BoardEntityObject> {
     const boardObject = await this.boardObjectRepo.updateZone(objectId, zoneId);
 
-    // Emit WebSocket event with explicit null for undefined zone_id
-    // JSON.stringify strips undefined fields, so convert to null to signal zone was cleared
-    const eventPayload = {
-      ...boardObject,
-      ...(boardObject.zone_id === undefined ? { zone_id: null } : {}),
-    };
-    this.emit?.('patched', eventPayload as BoardEntityObject, params);
+    // Emit WebSocket event with explicit null for undefined zone_id.
+    this.emit?.(
+      'patched',
+      toBoardObjectPatchedEventPayload(boardObject) as BoardEntityObject,
+      params
+    );
 
     return boardObject;
   }
@@ -224,9 +236,20 @@ export class BoardObjectsService {
   async clearZoneReferences(
     boardId: BoardID,
     zoneId: string,
-    zonePosition?: { x: number; y: number }
-  ): Promise<number> {
-    return this.boardObjectRepo.clearZoneReferences(boardId, zoneId, zonePosition);
+    zonePosition?: { x: number; y: number },
+    params?: BoardObjectParams
+  ): Promise<BoardEntityObject[]> {
+    const cleared = await this.boardObjectRepo.clearZoneReferences(boardId, zoneId, zonePosition);
+
+    for (const boardObject of cleared) {
+      this.emit?.(
+        'patched',
+        toBoardObjectPatchedEventPayload(boardObject) as BoardEntityObject,
+        params
+      );
+    }
+
+    return cleared;
   }
 
   /**
