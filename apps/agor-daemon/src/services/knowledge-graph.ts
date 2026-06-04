@@ -15,17 +15,33 @@ import { Forbidden, NotFound } from '@agor/core/feathers';
 import type {
   AuthenticatedParams,
   KnowledgeDocument,
+  KnowledgeGraphDocNode,
+  KnowledgeGraphEdgeType,
   KnowledgeGraphNode,
+  KnowledgeNamespaceGraph,
   QueryParams,
   User,
   UserID,
 } from '@agor/core/types';
-import { hasMinimumRole, parseKnowledgeUri, ROLES } from '@agor/core/types';
+import {
+  hasMinimumRole,
+  KNOWLEDGE_DOCUMENT_URI_PREFIX,
+  KNOWLEDGE_UNIT_URI_PREFIX,
+  parseKnowledgeUri,
+  ROLES,
+} from '@agor/core/types';
 
-export type KnowledgeGraphParams = QueryParams<KnowledgeGraphNeighborsQuery> & AuthenticatedParams;
+/** Query for the namespace-wide graph view (whole-namespace document graph). */
+export interface KnowledgeNamespaceGraphRequest {
+  namespace?: string;
+  namespace_id?: string;
+  edge_types?: KnowledgeGraphEdgeType[];
+}
 
-const KB_DOCUMENT_URI_PREFIX = 'agor://kb/document/';
-const KB_UNIT_URI_PREFIX = 'agor://kb/unit/';
+export type KnowledgeGraphParams = QueryParams<
+  KnowledgeGraphNeighborsQuery & KnowledgeNamespaceGraphRequest
+> &
+  AuthenticatedParams;
 
 export class KnowledgeGraphService {
   private graph: KnowledgeGraphRepository;
@@ -43,7 +59,57 @@ export class KnowledgeGraphService {
   }
 
   async find(params?: KnowledgeGraphParams) {
-    return this.neighbors((params?.query ?? {}) as KnowledgeGraphNeighborsQuery, params);
+    const query = (params?.query ?? {}) as KnowledgeGraphNeighborsQuery &
+      KnowledgeNamespaceGraphRequest;
+    // Whole-namespace graph view when no center node is given.
+    if (!query.node && (query.namespace || query.namespace_id)) {
+      return this.namespaceGraph(query, params);
+    }
+    return this.neighbors(query, params);
+  }
+
+  /**
+   * Build the whole-namespace document graph: every readable, non-archived
+   * document in the namespace as a node, plus the doc-to-doc edges between
+   * them. Edges touching a document the caller cannot read are dropped so the
+   * graph never leaks private document ids.
+   */
+  async namespaceGraph(
+    request: KnowledgeNamespaceGraphRequest,
+    params?: KnowledgeGraphParams
+  ): Promise<KnowledgeNamespaceGraph> {
+    const user = params?.user as User | undefined;
+    const namespace = request.namespace_id
+      ? await this.namespaces.findById(request.namespace_id)
+      : request.namespace
+        ? await this.namespaces.findBySlug(request.namespace)
+        : null;
+    if (!namespace || namespace.archived) {
+      return { namespace_id: null, nodes: [], edges: [] };
+    }
+
+    const docs = await this.documents.findAll({ namespace_id: namespace.namespace_id });
+    const readable = docs.filter((doc) => this.canRead(doc, user));
+    const readableIds = new Set<string>(readable.map((doc) => doc.document_id));
+
+    const nodes: KnowledgeGraphDocNode[] = readable.map((doc) => ({
+      document_id: doc.document_id,
+      title: doc.title,
+      path: doc.path,
+      uri: doc.uri,
+      kind: doc.kind,
+      visibility: doc.visibility,
+    }));
+
+    const rawEdges = await this.graph.documentEdgesForNamespace({
+      namespace_id: namespace.namespace_id,
+      edge_types: request.edge_types,
+    });
+    const edges = rawEdges.filter(
+      (edge) => readableIds.has(edge.source_document_id) && readableIds.has(edge.target_document_id)
+    );
+
+    return { namespace_id: namespace.namespace_id, nodes, edges };
   }
 
   private isAdmin(user?: User): boolean {
@@ -80,16 +146,16 @@ export class KnowledgeGraphService {
   private documentIdFromRef(ref: KnowledgeNodeRef): string | undefined {
     const documentId = ref.document_id ?? ref.documentId;
     if (documentId) return documentId;
-    if (ref.uri?.startsWith(KB_DOCUMENT_URI_PREFIX)) {
-      return ref.uri.slice(KB_DOCUMENT_URI_PREFIX.length);
+    if (ref.uri?.startsWith(KNOWLEDGE_DOCUMENT_URI_PREFIX)) {
+      return ref.uri.slice(KNOWLEDGE_DOCUMENT_URI_PREFIX.length);
     }
     return undefined;
   }
 
   private documentIdFromNode(node: KnowledgeGraphNode): string | undefined {
     if (node.document_id) return node.document_id;
-    if (node.uri.startsWith(KB_DOCUMENT_URI_PREFIX)) {
-      return node.uri.slice(KB_DOCUMENT_URI_PREFIX.length);
+    if (node.uri.startsWith(KNOWLEDGE_DOCUMENT_URI_PREFIX)) {
+      return node.uri.slice(KNOWLEDGE_DOCUMENT_URI_PREFIX.length);
     }
     return undefined;
   }
@@ -97,13 +163,15 @@ export class KnowledgeGraphService {
   private unitIdFromRef(ref: KnowledgeNodeRef): string | undefined {
     const unitId = ref.unit_id ?? ref.unitId;
     if (unitId) return unitId;
-    if (ref.uri?.startsWith(KB_UNIT_URI_PREFIX)) return ref.uri.slice(KB_UNIT_URI_PREFIX.length);
+    if (ref.uri?.startsWith(KNOWLEDGE_UNIT_URI_PREFIX))
+      return ref.uri.slice(KNOWLEDGE_UNIT_URI_PREFIX.length);
     return undefined;
   }
 
   private unitIdFromNode(node: KnowledgeGraphNode): string | undefined {
     if (node.unit_id) return node.unit_id;
-    if (node.uri.startsWith(KB_UNIT_URI_PREFIX)) return node.uri.slice(KB_UNIT_URI_PREFIX.length);
+    if (node.uri.startsWith(KNOWLEDGE_UNIT_URI_PREFIX))
+      return node.uri.slice(KNOWLEDGE_UNIT_URI_PREFIX.length);
     return undefined;
   }
 
