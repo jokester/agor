@@ -25,6 +25,7 @@ import {
   FolderOpenOutlined,
   FolderOutlined,
   HistoryOutlined,
+  QuestionCircleOutlined,
   ReloadOutlined,
   SaveOutlined,
   SearchOutlined,
@@ -64,8 +65,10 @@ import {
   type KbDocMention,
 } from '../components/AutocompleteTextarea';
 import { BrandLogo } from '../components/BrandLogo';
+import { GlobalUserMenu } from '../components/GlobalUserMenu';
 import { KnowledgeGraph } from '../components/KnowledgeGraph';
 import { MarkdownRenderer } from '../components/MarkdownRenderer';
+import { ThemeSwitcher } from '../components/ThemeSwitcher';
 import { DiffBlock } from '../components/ToolUseRenderer/renderers/DiffBlock';
 import { useThemedModal } from '../utils/modal';
 
@@ -103,6 +106,8 @@ interface KnowledgePageProps {
   currentUser?: User | null;
   /** All known users, keyed by id — powers `@` user mentions in the editor. */
   userById?: Map<string, User>;
+  onUserSettingsClick?: () => void;
+  onLogout?: () => void;
 }
 
 const EMPTY_USER_MAP: Map<string, User> = new Map();
@@ -298,6 +303,8 @@ export function KnowledgePage({
   client,
   currentUser = null,
   userById = EMPTY_USER_MAP,
+  onUserSettingsClick,
+  onLogout,
 }: KnowledgePageProps) {
   const { token } = theme.useToken();
   const { confirm } = useThemedModal();
@@ -1540,6 +1547,22 @@ export function KnowledgePage({
           <Button icon={<ReloadOutlined />} onClick={loadDocuments} loading={loading}>
             Refresh
           </Button>
+          <Tooltip title="Documentation" placement="bottom">
+            <Button
+              type="text"
+              icon={<QuestionCircleOutlined style={{ fontSize: token.fontSizeLG }} />}
+              href="https://agor.live/guide/getting-started"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            />
+          </Tooltip>
+          <ThemeSwitcher />
+          <GlobalUserMenu
+            user={currentUser}
+            onUserSettingsClick={onUserSettingsClick}
+            onLogout={onLogout}
+          />
         </Space>
       </Header>
 
@@ -1963,7 +1986,7 @@ export function KnowledgePage({
         title="Version history"
         open={historyOpen}
         onClose={() => setHistoryOpen(false)}
-        width="72vw"
+        size="72vw"
         destroyOnHidden
         extra={
           <Space>

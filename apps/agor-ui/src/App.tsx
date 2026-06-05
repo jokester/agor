@@ -26,16 +26,14 @@ import {
   UI_MOUNT_PATH,
 } from '@agor-live/client';
 import { Alert, App as AntApp, ConfigProvider, Spin, theme } from 'antd';
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { BrowserRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { AVAILABLE_AGENTS } from './components/AgentSelectionGrid';
-import { App as AgorApp } from './components/App';
 import type { BranchUpdate } from './components/BranchModal/tabs/GeneralTab';
 import { ErrorBoundary, setCrashContext } from './components/ErrorBoundary';
 import { ForcePasswordChangeModal } from './components/ForcePasswordChangeModal';
 import { InitialLoadingScreen } from './components/InitialLoadingScreen';
 import { LoginPage } from './components/LoginPage';
-import { MobileApp } from './components/mobile/MobileApp';
 import { OnboardingWizard } from './components/OnboardingWizard';
 import { CanvasNavigationProvider } from './contexts/CanvasNavigationContext';
 import { ConnectionProvider } from './contexts/ConnectionContext';
@@ -51,10 +49,24 @@ import {
   useServerVersion,
   useSessionActions,
 } from './hooks';
-import { KnowledgePage } from './pages/KnowledgePage';
-import { StreamdownDemoPage } from './pages/StreamdownDemoPage';
+import { SharedUserSettingsModal } from './surfaces/SharedUserSettingsModal';
+import { KNOWLEDGE_ROUTE_PATHS, routeUsesDeviceRouter } from './surfaces/surfaceRegistry';
+import { useWorkspaceSurfaceLifecycle } from './surfaces/useWorkspaceSurfaceLifecycle';
 import { isMobileDevice } from './utils/deviceDetection';
 import { useThemedMessage } from './utils/message';
+
+const AgorApp = lazy(() => import('./components/App').then((module) => ({ default: module.App })));
+const KnowledgePage = lazy(() =>
+  import('./pages/KnowledgePage').then((module) => ({ default: module.KnowledgePage }))
+);
+const MobileApp = lazy(() =>
+  import('./components/mobile/MobileApp').then((module) => ({ default: module.MobileApp }))
+);
+const StreamdownDemoPage = lazy(() =>
+  import('./pages/StreamdownDemoPage').then((module) => ({
+    default: module.StreamdownDemoPage,
+  }))
+);
 
 /**
  * DeviceRouter - Redirects users to mobile or desktop site based on device detection
@@ -65,6 +77,8 @@ function DeviceRouter() {
   const navigate = useNavigate();
 
   useEffect(() => {
+    if (!routeUsesDeviceRouter(location.pathname)) return;
+
     const checkAndRoute = () => {
       const isMobile = isMobileDevice();
       const isOnMobilePath = location.pathname.startsWith('/m');
@@ -105,6 +119,27 @@ function AppContent() {
   const { token } = theme.useToken();
   const { showSuccess, showError, showWarning, showLoading, destroy } = useThemedMessage();
   const navigate = useNavigate();
+  const location = useLocation();
+  const { currentSurface, workspaceSurfaceShouldRun } = useWorkspaceSurfaceLifecycle(
+    location.pathname
+  );
+  const sharedSurfaceOwnsUserSettings = currentSurface.usesSharedUserSettings;
+
+  const routeFallback = (
+    <div
+      style={{
+        height: '100vh',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: token.colorBgLayout,
+      }}
+    >
+      <Spin size="large" />
+      <div style={{ marginTop: 16, color: token.colorTextSecondary }}>Loading surface...</div>
+    </div>
+  );
 
   // Fetch daemon auth and instance configuration
   const {
@@ -176,7 +211,7 @@ function AppContent() {
     loading,
     error: dataError,
   } = useAgorData(client, {
-    enabled: !user?.must_change_password,
+    enabled: workspaceSurfaceShouldRun && !user?.must_change_password,
   });
 
   // Session actions
@@ -193,7 +228,6 @@ function AppContent() {
   const [openNewBranch, setOpenNewBranch] = useState(false);
 
   // Detect GitHub App setup callback URL and auto-open gateway settings
-  const location = useLocation();
   useEffect(() => {
     if (
       location.pathname === '/gateway/github/setup' &&
@@ -254,11 +288,19 @@ function AppContent() {
       currentUser.onboarding_completed === false &&
       !currentUser.must_change_password &&
       connected &&
+      workspaceSurfaceShouldRun &&
+      currentSurface.startsWorkspaceRuntime &&
       !loading
     ) {
       setOnboardingWizardOpen(true);
     }
-  }, [currentUser, connected, loading]);
+  }, [
+    currentUser,
+    connected,
+    workspaceSurfaceShouldRun,
+    currentSurface.startsWorkspaceRuntime,
+    loading,
+  ]);
 
   // Handle wizard completion
   const handleOnboardingComplete = async (result: {
@@ -385,7 +427,7 @@ function AppContent() {
 
   // Show reconnecting state if we have tokens but lost connection.
   // ONLY show fullscreen on initial connection, not during reconnections.
-  if (hasTokens && (!connected || !authenticated) && !hasLoadedOnce) {
+  if (hasTokens && (!connected || !authenticated) && workspaceSurfaceShouldRun && !hasLoadedOnce) {
     return (
       <div
         style={{
@@ -455,14 +497,14 @@ function AppContent() {
 
   // Show loading state ONLY on initial load, not during reconnections
   // Once data is loaded, keep UI mounted and show connection status in header instead
-  if (loaderPhase !== 'done') {
+  if (workspaceSurfaceShouldRun && loaderPhase !== 'done') {
     return (
       <InitialLoadingScreen phase={loaderPhase} connecting={connecting} items={initialLoadItems} />
     );
   }
 
   // Show data error (but not if user needs to change password - let the modal render)
-  if (dataError && !user?.must_change_password) {
+  if (workspaceSurfaceShouldRun && dataError && !user?.must_change_password) {
     return (
       <div
         style={{
@@ -1333,6 +1375,16 @@ function AppContent() {
     setOpenNewBranch(false);
   };
 
+  const knowledgePageElement = (
+    <KnowledgePage
+      client={client}
+      currentUser={currentUser}
+      userById={userById}
+      onUserSettingsClick={() => setOpenUserSettings(true)}
+      onLogout={logout}
+    />
+  );
+
   // All desktop entity URLs (/b/, /s/, /w/, /a/) render the same
   // AgorApp — the multiple routes exist so react-router's useParams
   // (read inside useUrlState) populates the right named params for
@@ -1429,6 +1481,21 @@ function AppContent() {
           onLogout={logout}
         />
 
+        {/* Shared/current-user settings for lightweight surfaces. The full
+            Workspace App still owns its existing settings stack; this wrapper
+            lets Knowledge expose the user menu without mounting Workspace. */}
+        {sharedSurfaceOwnsUserSettings && (
+          <SharedUserSettingsModal
+            open={openUserSettings}
+            onClose={() => setOpenUserSettings(false)}
+            user={currentUser}
+            client={client}
+            mcpServerById={mcpServerById}
+            onUpdateUser={handleUpdateUser}
+            onRefreshCurrentUser={reAuthenticate}
+          />
+        )}
+
         {/* Onboarding Wizard - shown for new users.
             Key by user identity so the wizard's local React state (currentStep,
             resumedRef, createdRepoId, etc.) is bound to the signed-in user.
@@ -1474,89 +1541,73 @@ function AppContent() {
         />
 
         <DeviceRouter />
-        <Routes>
-          {/* Demo route */}
-          <Route path="/demo/streamdown" element={<StreamdownDemoPage />} />
+        <Suspense fallback={routeFallback}>
+          <Routes>
+            {/* Demo route */}
+            <Route path="/demo/streamdown" element={<StreamdownDemoPage />} />
 
-          {/* Knowledge route shell. `/kb` is a short alias for the same surface. */}
-          <Route
-            path="/knowledge"
-            element={
-              <KnowledgePage client={client} currentUser={currentUser} userById={userById} />
-            }
-          />
-          <Route
-            path="/knowledge/:namespaceSlug/*"
-            element={
-              <KnowledgePage client={client} currentUser={currentUser} userById={userById} />
-            }
-          />
-          <Route
-            path="/kb"
-            element={
-              <KnowledgePage client={client} currentUser={currentUser} userById={userById} />
-            }
-          />
-          <Route
-            path="/kb/:namespaceSlug/*"
-            element={
-              <KnowledgePage client={client} currentUser={currentUser} userById={userById} />
-            }
-          />
+            {/* Knowledge route shell. `/kb` is a short alias for the same surface. */}
+            {KNOWLEDGE_ROUTE_PATHS.map((path) => (
+              <Route key={path} path={path} element={knowledgePageElement} />
+            ))}
 
-          {/* Mobile routes */}
-          <Route
-            path="/m/*"
-            element={
-              <MobileApp
-                client={client}
-                user={user}
-                sessionById={sessionById}
-                sessionsByBranch={sessionsByBranch}
-                boardById={boardById}
-                commentById={commentById}
-                repoById={repoById}
-                branchById={branchById}
-                userById={userById}
-                onSendPrompt={handleSendPrompt}
-                onSendComment={handleSendComment}
-                onReplyComment={handleReplyComment}
-                onResolveComment={handleResolveComment}
-                onToggleReaction={handleToggleReaction}
-                onDeleteComment={handleDeleteComment}
-                onLogout={logout}
-                promptDrafts={promptDrafts}
-                onUpdateDraft={handleUpdateDraft}
-              />
-            }
-          />
+            {/* Mobile routes */}
+            <Route
+              path="/m/*"
+              element={
+                <MobileApp
+                  client={client}
+                  user={user}
+                  sessionById={sessionById}
+                  sessionsByBranch={sessionsByBranch}
+                  boardById={boardById}
+                  commentById={commentById}
+                  repoById={repoById}
+                  branchById={branchById}
+                  userById={userById}
+                  onSendPrompt={handleSendPrompt}
+                  onSendComment={handleSendComment}
+                  onReplyComment={handleReplyComment}
+                  onResolveComment={handleResolveComment}
+                  onToggleReaction={handleToggleReaction}
+                  onDeleteComment={handleDeleteComment}
+                  onLogout={logout}
+                  promptDrafts={promptDrafts}
+                  onUpdateDraft={handleUpdateDraft}
+                />
+              }
+            />
 
-          {/* Desktop routes — flat entity URLs. Boards have their own
-              path because they're a destination; sub-entities (session,
-              branch, artifact) get top-level paths keyed by short ID
-              so they're stable across board moves. The app resolves the
-              entity at click time, looks up its current board, and
-              switches if needed. Path segments come from the shared
-              `ENTITY_PATH_SEGMENTS` constant so this list and the
-              URL/path builders can't drift. See
-              `packages/core/src/utils/url.ts`. */}
-          <Route path={`/${ENTITY_PATH_SEGMENTS.board}/:boardParam/`} element={desktopAppElement} />
-          <Route
-            path={`/${ENTITY_PATH_SEGMENTS.session}/:sessionShortId/`}
-            element={desktopAppElement}
-          />
-          <Route
-            path={`/${ENTITY_PATH_SEGMENTS.branch}/:branchShortId/`}
-            element={desktopAppElement}
-          />
-          <Route
-            path={`/${ENTITY_PATH_SEGMENTS.artifact}/:artifactShortId/`}
-            element={desktopAppElement}
-          />
+            {/* Desktop routes — flat entity URLs. Boards have their own
+                path because they're a destination; sub-entities (session,
+                branch, artifact) get top-level paths keyed by short ID
+                so they're stable across board moves. The app resolves the
+                entity at click time, looks up its current board, and
+                switches if needed. Path segments come from the shared
+                `ENTITY_PATH_SEGMENTS` constant so this list and the
+                URL/path builders can't drift. See
+                `packages/core/src/utils/url.ts`. */}
+            <Route
+              path={`/${ENTITY_PATH_SEGMENTS.board}/:boardParam/`}
+              element={desktopAppElement}
+            />
+            <Route
+              path={`/${ENTITY_PATH_SEGMENTS.session}/:sessionShortId/`}
+              element={desktopAppElement}
+            />
+            <Route
+              path={`/${ENTITY_PATH_SEGMENTS.branch}/:branchShortId/`}
+              element={desktopAppElement}
+            />
+            <Route
+              path={`/${ENTITY_PATH_SEGMENTS.artifact}/:artifactShortId/`}
+              element={desktopAppElement}
+            />
 
-          {/* Fallback for unknown / root paths */}
-          <Route path="/*" element={desktopAppElement} />
-        </Routes>
+            {/* Fallback for unknown / root paths */}
+            <Route path="/*" element={desktopAppElement} />
+          </Routes>
+        </Suspense>
       </ConnectionProvider>
     </ServicesConfigContext.Provider>
   );
