@@ -103,6 +103,10 @@ import {
 import { inspectBranchViaExecutor } from './utils/branch-inspect.js';
 import { resolveExecutorReadAsUser } from './utils/executor-read-impersonation.js';
 import { injectCreatedBy } from './utils/inject-created-by.js';
+import {
+  redactMCPServerHeaderSecrets,
+  shouldExposeMCPHeaderSecrets,
+} from './utils/mcp-header-secrets.js';
 import { canReceiveMcpTokenForSession } from './utils/mcp-token-authorization.js';
 import { realignRepoOriginAfterPatchHook } from './utils/realign-repo-origin.js';
 import {
@@ -1210,6 +1214,20 @@ export function registerHooks(ctx: RegisterHooksContext): void {
     return context;
   };
 
+  const redactMCPHeaderSecrets = async (context: HookContext) => {
+    if (shouldExposeMCPHeaderSecrets(context.params)) return context;
+
+    if (Array.isArray(context.result)) {
+      context.result = context.result.map(redactMCPServerHeaderSecrets);
+    } else if (context.result?.data && Array.isArray(context.result.data)) {
+      context.result.data = context.result.data.map(redactMCPServerHeaderSecrets);
+    } else if (context.result?.mcp_server_id) {
+      context.result = redactMCPServerHeaderSecrets(context.result);
+    }
+
+    return context;
+  };
+
   // NOTE: mcp-servers is global admin-managed configuration. These rows are
   // not branch- or session-scoped, so no RBAC find() scoping is applied.
   // Creation/update/removal remain gated by requireMinimumRole(ADMIN).
@@ -1221,8 +1239,11 @@ export function registerHooks(ctx: RegisterHooksContext): void {
       remove: [requireMinimumRole(ROLES.ADMIN, 'delete MCP servers')],
     },
     after: {
-      find: [injectPerUserOAuthTokens],
-      get: [injectPerUserOAuthTokens],
+      find: [injectPerUserOAuthTokens, redactMCPHeaderSecrets],
+      get: [injectPerUserOAuthTokens, redactMCPHeaderSecrets],
+      create: [redactMCPHeaderSecrets],
+      patch: [redactMCPHeaderSecrets],
+      update: [redactMCPHeaderSecrets],
     },
   });
 

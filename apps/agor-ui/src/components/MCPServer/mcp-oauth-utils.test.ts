@@ -5,6 +5,7 @@ import {
   extractOAuthConfigForTesting,
   isTemplateValue,
   parseEnvJSON,
+  validateHeadersJSON,
 } from './mcp-oauth-utils';
 
 describe('isTemplateValue', () => {
@@ -207,5 +208,48 @@ describe('parseEnvJSON', () => {
 
   it('returns undefined for invalid JSON (silently)', () => {
     expect(parseEnvJSON('{not json')).toBeUndefined();
+  });
+});
+
+describe('parseHeadersJSON', () => {
+  it('parses string-valued custom headers and drops Authorization', async () => {
+    const { parseHeadersJSON } = await import('./mcp-oauth-utils');
+
+    expect(
+      parseHeadersJSON(
+        JSON.stringify({
+          'DD-API-KEY': '{{ user.env.DD_API_KEY }}',
+          Authorization: 'Bearer should-not-persist-here',
+          'X-Org': '123',
+          Count: 42,
+        })
+      )
+    ).toEqual({
+      'DD-API-KEY': '{{ user.env.DD_API_KEY }}',
+      'X-Org': '123',
+    });
+  });
+});
+
+describe('validateHeadersJSON', () => {
+  it('accepts empty and valid object input', () => {
+    expect(validateHeadersJSON(undefined)).toBeUndefined();
+    expect(validateHeadersJSON('')).toBeUndefined();
+    expect(validateHeadersJSON('{"DD-API-KEY": "{{ user.env.DD_API_KEY }}"}')).toBeUndefined();
+  });
+
+  it('rejects invalid JSON, non-object input, empty names, and non-string values', () => {
+    expect(validateHeadersJSON('{not json')).toBe('Custom HTTP headers must be valid JSON');
+    expect(validateHeadersJSON('[]')).toBe('Custom HTTP headers must be a JSON object');
+    expect(validateHeadersJSON('{"": "value"}')).toBe('Custom HTTP header names cannot be empty');
+    expect(validateHeadersJSON('{"bad header": "value"}')).toBe(
+      'Invalid custom HTTP header name: bad header'
+    );
+    expect(validateHeadersJSON('{"Cookie": "session=secret"}')).toBe(
+      'Custom HTTP header Cookie is reserved and cannot be configured here'
+    );
+    expect(validateHeadersJSON('{"X-Count": 42}')).toBe(
+      'Custom HTTP header values must be strings'
+    );
   });
 });

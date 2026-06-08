@@ -3,7 +3,7 @@ import { Form, Modal } from 'antd';
 import { useEffect, useState } from 'react';
 import { useThemedMessage } from '@/utils/message';
 import { MCPServerFormFields } from './MCPServerFormFields';
-import { buildAuthFromValues, parseEnvJSON } from './mcp-oauth-utils';
+import { buildAuthFromValues, parseEnvJSON, parseHeadersJSON } from './mcp-oauth-utils';
 
 export interface MCPServerEditModalProps {
   /** The server being edited. Modal opens when this is non-null and `open` is true. */
@@ -71,6 +71,7 @@ export const MCPServerEditModal: React.FC<MCPServerEditModalProps> = ({
       scope: server.scope,
       enabled: server.enabled,
       env: server.env ? JSON.stringify(server.env, null, 2) : undefined,
+      headers: server.headers ? JSON.stringify(server.headers, null, 2) : undefined,
       auth_type: serverAuthType,
     };
 
@@ -121,6 +122,12 @@ export const MCPServerEditModal: React.FC<MCPServerEditModalProps> = ({
       showError('Connection test is not available for stdio transport');
       return;
     }
+    try {
+      await form.validateFields(['headers']);
+    } catch {
+      showError('Please fix custom HTTP headers before testing');
+      return;
+    }
 
     setTesting(true);
     setTestResult(null);
@@ -131,6 +138,7 @@ export const MCPServerEditModal: React.FC<MCPServerEditModalProps> = ({
         url: values.url,
         transport: values.transport || 'http',
         auth: buildAuthFromValues(values),
+        headers: parseHeadersJSON(values.headers),
       })) as {
         success: boolean;
         error?: string;
@@ -193,6 +201,7 @@ export const MCPServerEditModal: React.FC<MCPServerEditModalProps> = ({
         updates.args = values.args?.split(',').map((arg: string) => arg.trim()) || [];
       } else {
         updates.url = values.url;
+        updates.headers = parseHeadersJSON(values.headers);
       }
 
       const env = parseEnvJSON(values.env);

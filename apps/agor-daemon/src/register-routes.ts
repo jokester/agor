@@ -107,6 +107,10 @@ import {
 } from './utils/branch-authorization.js';
 import { buildInitialUserMessage } from './utils/build-initial-user-message.js';
 import { buildPrompterPrefixedPrompt } from './utils/build-prompter-prefix.js';
+import {
+  redactMCPServerHeaderSecrets,
+  shouldExposeMCPHeaderSecrets,
+} from './utils/mcp-header-secrets.js';
 import { canControlCliSession } from './utils/mcp-token-authorization.js';
 import { ensureScheduleRunsAsCaller } from './utils/schedule-hooks.js';
 import { findActiveTasksForSession } from './utils/session-tasks.js';
@@ -3108,11 +3112,14 @@ export async function registerRoutes(ctx: RegisterRoutesContext): Promise<void> 
           if (!id) throw new Error('Session ID required');
           const enabledOnly =
             params.query?.enabledOnly === 'true' || params.query?.enabledOnly === true;
-          return sessionMCPServersService.listServers(
+          const servers = await sessionMCPServersService.listServers(
             id as import('@agor/core/types').SessionID,
             enabledOnly,
             params
           );
+          return shouldExposeMCPHeaderSecrets(params)
+            ? servers
+            : servers.map(redactMCPServerHeaderSecrets);
         },
         async create(data: { mcpServerId: string }, params: RouteParams) {
           const id = params.route?.id;
