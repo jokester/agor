@@ -52,6 +52,123 @@ export const PERMISSION_RANK: Record<BranchPermissionLevel, number> = Object.fro
   BRANCH_PERMISSION_LEVELS.map((level, i) => [level, i - 1])
 ) as Record<BranchPermissionLevel, number>;
 
+const REQUEST_RBAC_CACHE_LIMIT = 32;
+
+interface RequestScopedRbacCache {
+  sessions: Map<string, Session>;
+  branches: Map<string, Branch>;
+  branchAccess: Map<
+    string,
+    {
+      isOwner: boolean;
+      branchPermission: BranchPermissionLevel;
+    }
+  >;
+}
+
+type PrefetchParams = AuthenticatedParams & {
+  branch?: Branch;
+  session?: Session;
+  _agorRbacCache?: RequestScopedRbacCache;
+  _agorPrefetchedRecord?: {
+    id: string;
+    idField: string;
+    record: unknown;
+  };
+};
+
+function getRequestRbacCache(params: AuthenticatedParams): RequestScopedRbacCache {
+  const prefetchParams = params as PrefetchParams;
+  if (!prefetchParams._agorRbacCache) {
+    prefetchParams._agorRbacCache = {
+      sessions: new Map(),
+      branches: new Map(),
+      branchAccess: new Map(),
+    };
+  }
+  return prefetchParams._agorRbacCache;
+}
+
+function rememberBounded<T>(map: Map<string, T>, key: string, value: T): T {
+  if (!map.has(key) && map.size >= REQUEST_RBAC_CACHE_LIMIT) {
+    const oldestKey = map.keys().next().value;
+    if (oldestKey) map.delete(oldestKey);
+  }
+  map.set(key, value);
+  return value;
+}
+
+function inferIdFieldForPath(path: string): string | undefined {
+  switch (path) {
+    case 'branches':
+      return 'branch_id';
+    case 'sessions':
+      return 'session_id';
+    case 'tasks':
+      return 'task_id';
+    case 'messages':
+      return 'message_id';
+    default:
+      return undefined;
+  }
+}
+
+function rememberPrefetchedRecord(
+  context: HookContext,
+  record: unknown,
+  idField: string,
+  id: string
+): void {
+  (context.params as PrefetchParams)._agorPrefetchedRecord = {
+    id,
+    idField,
+    record,
+  };
+}
+
+async function loadCachedSession(
+  params: AuthenticatedParams,
+  // biome-ignore lint/suspicious/noExplicitAny: FeathersJS service type not fully typed
+  sessionService: any,
+  sessionId: string
+): Promise<Session> {
+  const cachedParamSession = (params as PrefetchParams).session as Session | undefined;
+  if (cachedParamSession?.session_id === sessionId) {
+    return cachedParamSession;
+  }
+
+  const cache = getRequestRbacCache(params);
+  const cached = cache.sessions.get(sessionId);
+  if (cached) return cached;
+
+  const session = (await sessionService.get(sessionId, { provider: undefined })) as Session | null;
+  if (!session) {
+    throw new Forbidden(`Session not found: ${sessionId}`);
+  }
+  return rememberBounded(cache.sessions, sessionId, session);
+}
+
+async function loadCachedBranch(
+  params: AuthenticatedParams,
+  branchRepo: BranchRepository,
+  branchId: string
+): Promise<Branch> {
+  const cachedParamBranch = (params as PrefetchParams).branch as Branch | undefined;
+  if (cachedParamBranch?.branch_id === branchId) {
+    return cachedParamBranch;
+  }
+
+  const cache = getRequestRbacCache(params);
+  const cached = cache.branches.get(branchId);
+  if (cached) return cached;
+
+  const branch = await branchRepo.findById(branchId);
+  if (!branch) {
+    throw new Forbidden(`Branch not found: ${branchId}`);
+  }
+  return rememberBounded(cache.branches, branchId, branch);
+}
+
 /**
  * Check if user has minimum required permission level on a branch
  *
@@ -135,11 +252,21 @@ export async function cacheBranchAccess(
   branchRepo: BranchRepository,
   branch: Branch
 ): Promise<void> {
+  const cache = getRequestRbacCache(params);
+  rememberBounded(cache.branches, branch.branch_id as string, branch);
+
   const userId = params.user?.user_id as UUID | undefined;
-  const isOwner = userId ? await branchRepo.isOwner(branch.branch_id, userId) : false;
-  const branchPermission = userId
-    ? await branchRepo.resolveUserPermission(branch, userId)
-    : (branch.others_can ?? 'session');
+  const accessKey = `${branch.branch_id}:${userId ?? '__anonymous__'}`;
+  let access = cache.branchAccess.get(accessKey);
+  if (!access) {
+    access = {
+      isOwner: userId ? await branchRepo.isOwner(branch.branch_id, userId) : false,
+      branchPermission: userId
+        ? await branchRepo.resolveUserPermission(branch, userId)
+        : (branch.others_can ?? 'session'),
+    };
+    rememberBounded(cache.branchAccess, accessKey, access);
+  }
 
   const rbacParams = params as AuthenticatedParams & {
     branch?: Branch;
@@ -147,8 +274,8 @@ export async function cacheBranchAccess(
     branchPermission?: BranchPermissionLevel;
   };
   rbacParams.branch = branch;
-  rbacParams.isBranchOwner = isOwner;
-  rbacParams.branchPermission = branchPermission;
+  rbacParams.isBranchOwner = access.isOwner;
+  rbacParams.branchPermission = access.branchPermission;
 }
 
 /**
@@ -247,10 +374,9 @@ export function loadBranch(branchRepo: BranchRepository, branchIdField = 'branch
       throw new Error(`Cannot load branch: ${branchIdField} not found`);
     }
 
-    // Load branch
-    const branch = await branchRepo.findById(branchId);
-    if (!branch) {
-      throw new Forbidden(`Branch not found: ${branchId}`);
+    const branch = await loadCachedBranch(context.params, branchRepo, branchId);
+    if (context.path === 'branches' && context.id && String(context.id) === branchId) {
+      rememberPrefetchedRecord(context, branch, 'branch_id', branchId);
     }
 
     // Cache on context for downstream hooks (type-safe via RBACParams)
@@ -626,10 +752,6 @@ export function loadSessionBranch(
       return context;
     }
 
-    console.log(
-      `[loadSessionBranch] method=${context.method}, path=${context.path}, id=${context.id || 'none'}`
-    );
-
     // Extract session_id from data, query, or id
     let sessionId: string | undefined;
 
@@ -645,29 +767,30 @@ export function loadSessionBranch(
       if (context.path === 'sessions') {
         sessionId = context.id as string;
       } else {
-        // For tasks/messages, session_id should be in data/query
-        sessionId = data?.session_id || query?.session_id;
-
-        // If session_id not provided in patch/remove, load existing record
-        if (!sessionId && (context.method === 'patch' || context.method === 'remove')) {
-          console.log(
-            `[loadSessionBranch] Loading existing ${context.path} record to get session_id. ID: ${context.id}`
-          );
+        // For id-addressed nested resources, trust the stored parent pointer,
+        // not client-supplied data/query. Otherwise a caller could authorize
+        // against a session they can access while fetching/patching/removing a
+        // task/message that actually belongs to a different session.
+        if (context.method === 'get' || context.method === 'patch' || context.method === 'remove') {
           try {
             // biome-ignore lint/suspicious/noExplicitAny: FeathersJS service type not fully typed
             const existingRecord = await (context.service as any).get(context.id, {
               provider: undefined, // Bypass provider to avoid recursion
             });
             sessionId = existingRecord?.session_id;
-            console.log(
-              `[loadSessionBranch] Loaded session_id from existing record: ${sessionId ? shortId(sessionId) : 'NOT FOUND'}`
-            );
+            const idField = inferIdFieldForPath(context.path);
+            if (existingRecord && idField) {
+              rememberPrefetchedRecord(context, existingRecord, idField, String(context.id));
+            }
           } catch (error) {
             console.error(
               `[loadSessionBranch] Failed to load existing ${context.path} record for session_id:`,
               error
             );
           }
+        } else {
+          // For create/find on nested resources, session_id should be in data/query.
+          sessionId = data?.session_id || query?.session_id;
         }
       }
     } else if (query?.session_id) {
@@ -678,17 +801,12 @@ export function loadSessionBranch(
       throw new Error('Cannot load session branch: session_id not found');
     }
 
-    // Load session (bypass provider to avoid recursion)
-    const session = await sessionService.get(sessionId, { provider: undefined });
-    if (!session) {
-      throw new Forbidden(`Session not found: ${sessionId}`);
+    const session = await loadCachedSession(context.params, sessionService, sessionId);
+    if (context.path === 'sessions' && context.id && String(context.id) === sessionId) {
+      rememberPrefetchedRecord(context, session, 'session_id', sessionId);
     }
 
-    // Load branch
-    const branch = await branchRepo.findById(session.branch_id);
-    if (!branch) {
-      throw new Forbidden(`Branch not found: ${session.branch_id}`);
-    }
+    const branch = await loadCachedBranch(context.params, branchRepo, session.branch_id);
 
     // Cache on context for downstream hooks (type-safe via RBACParams)
     context.params.session = session;
@@ -703,7 +821,7 @@ export function loadSessionBranch(
  *
  * Extracts session_id from various sources based on the operation:
  * - Sessions: context.id (for get/patch/remove) or data.session_id (for create)
- * - Tasks/Messages: data.session_id (for create) or load from existing record (for patch/remove)
+ * - Tasks/Messages: data.session_id (for create/find) or load from existing record (for get/patch/remove)
  *
  * Caches session_id on context.params.sessionId for downstream hooks.
  *
@@ -735,34 +853,26 @@ export function resolveSessionContext() {
     else if (context.path === 'tasks' || context.path === 'messages') {
       if (context.method === 'create') {
         sessionId = data?.session_id;
-      } else if (context.method === 'patch' || context.method === 'remove') {
-        // Try data/query first
-        sessionId = data?.session_id || query?.session_id;
-
-        // If not found, load existing record
-        if (!sessionId && context.id) {
+      } else if (
+        context.method === 'get' ||
+        context.method === 'patch' ||
+        context.method === 'remove'
+      ) {
+        // Id-addressed nested resources must authorize against the stored
+        // parent session, not a client-supplied session_id in data/query. The
+        // prefetched record is reused by DrizzleService.get/patch/remove, so
+        // this safety read does not add a second primary-key read later.
+        if (context.id) {
           try {
             // biome-ignore lint/suspicious/noExplicitAny: FeathersJS service type
             const existing = await (context.service as any).get(context.id, {
               provider: undefined,
             });
             sessionId = existing?.session_id;
-          } catch (error) {
-            console.error(`[resolveSessionContext] Failed to load existing record:`, error);
-          }
-        }
-      } else if (context.method === 'get') {
-        // Try query first (if session_id provided in params)
-        sessionId = query?.session_id;
-
-        // If not found and we have an ID, load existing record
-        if (!sessionId && context.id) {
-          try {
-            // biome-ignore lint/suspicious/noExplicitAny: FeathersJS service type
-            const existing = await (context.service as any).get(context.id, {
-              provider: undefined,
-            });
-            sessionId = existing?.session_id;
+            const idField = inferIdFieldForPath(context.path);
+            if (existing && idField) {
+              rememberPrefetchedRecord(context, existing, idField, String(context.id));
+            }
           } catch (error) {
             console.error(`[resolveSessionContext] Failed to load existing record:`, error);
           }
@@ -811,11 +921,9 @@ export function loadSession(
       throw new Error('resolveSessionContext hook must run before loadSession');
     }
 
-    // Load session (bypass provider to avoid recursion)
-    const session = await sessionService.get(sessionId, { provider: undefined });
-
-    if (!session) {
-      throw new Forbidden(`Session not found: ${sessionId}`);
+    const session = await loadCachedSession(context.params, sessionService, sessionId);
+    if (context.path === 'sessions' && context.id && String(context.id) === sessionId) {
+      rememberPrefetchedRecord(context, session, 'session_id', sessionId);
     }
 
     // Cache on context for downstream hooks (type-safe via RBACParams)
@@ -853,12 +961,7 @@ export function loadBranchFromSession(branchRepo: BranchRepository) {
       throw new Error('loadSession hook must run before loadBranchFromSession');
     }
 
-    // Load branch
-    const branch = await branchRepo.findById(session.branch_id);
-
-    if (!branch) {
-      throw new Forbidden(`Branch not found: ${session.branch_id}`);
-    }
+    const branch = await loadCachedBranch(context.params, branchRepo, session.branch_id);
 
     // Cache on context for downstream hooks (type-safe via RBACParams)
     await cacheBranchAccess(context.params, branchRepo, branch);
